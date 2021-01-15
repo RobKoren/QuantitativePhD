@@ -1,3 +1,3 @@
-# QuantitativePhDThis is a line
+Check out my website @
 
-(http://RobKoren.github.io/final.html)
+Psydatas.com
