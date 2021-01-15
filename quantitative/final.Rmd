@@ -1,0 +1,293 @@
+---
+title: "Final project"
+author: "Korenyi Robert"
+date: '2021 01 13 '
+output:
+  html_document:
+    toc: true
+    toc_depth: 4
+editor_options: 
+  chunk_output_type: console
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+libs <- c("tidyverse", "tidytuesdayR", "lubridate", "viridis", "Hmisc", "knitr", "psych", "MASS", "reshape2", "car")
+lapply(libs, require, character.only = TRUE)
+theme(theme_light())
+Sys.setlocale("LC_TIME", "English")
+```
+
+# Choice of Topic
+
+As an avid gamer who used to work in the gaming industry, I have always been interested in games. Over the years, I have also gained several insights on how the industry works. The dataset I will be working with in this small project comes from [Tidytuesday](https://github.com/rfordatascience/tidytuesday/tree/master/data/2019/2019-07-30). The dataset includes data concerning video games.The data dictionary can be retrieved from [Tidytuesday](https://github.com/rfordatascience/tidytuesday/tree/master/data/2019/2019-07-30).
+
+#Research Question
+
+Developing a game can be a long and time-consuming endevour and therefore it may happen that the developers of the game might not be the same as the publishers. If not handled well, this might cause conflicts in communication, finance, development..etc. In the past, there were occasions when a promising new title succumbed to the dual nature of the production line.
+Another issue with games is how to put a price tag on them. Different monetary models exist, however in recent years those games who were able to find the cutoff point for a reasonable price might have coined a big success.
+
+In this project we are looking to answer the following question:
+
+* Is a **game's success** depend on whether the developers also deal with publishing? 
+* Furthermore, does price have an effect on how **successful** a game is?
+
+# Definitions and variable setup
+
+Within the framework of this project, **I define a game's success by the number of copies sold.** Naturally, this definition has its limits, since there might be other criteria of success (Is the game active since its release? How long has the title been released?). However this is beyond the scope of this analysis.
+
+The variables used:
+
+* **Owners**: in the original dataset, this *character* variable presented an estimate of copies sold. In this project I will be using the maximum estimate of copies. Furthermore, this variable will be transfomed into a *categorical* one in order to reduce the number of dimensions.
+* **Price**: This *numerical* variable will also be transformed into an **ordered categorical** variable, since I am more interested in range of prices rather than the exact price.
+* **Developer/Publisher**: These two *categorical* variables will be merged to one *composite logical* variable to show whether the game has the same developer/publisher or not. 
+
+
+# Exploratory Data Analysis
+
+```{r results='hide'}
+vgames <- tt_load("2019-07-30")
+vgames <- vgames$`video_games`
+
+#get a feel of the data
+
+str(vgames)
+
+```
+
+
+## Accuracy
+
+
+```{r results='hide', warning=FALSE}
+#Separate estimates in the owner var
+
+vgames1 <- vgames %>%
+  mutate(
+    max_owners = str_trim(word(owners, 2, sep = "\\..")),
+    max_owners = as.numeric(str_replace_all(max_owners, ",", "")),
+    min_owners = str_trim(word(owners, 1, sep = "\\..")),
+    min_owners = as.numeric(str_replace_all(min_owners, ",", ""))
+  )
+
+#seaparate release date var
+
+vgames1 <- vgames1 %>% mutate(
+  year = year(mdy(release_date)),
+  month = month(mdy(release_date), label = TRUE),
+  weekday = wday(mdy(release_date), label = TRUE)
+)
+
+
+```
+
+
+## Missing Datas
+
+```{r}
+# Metascore is MNAR so it is useless -> drop that 
+colSums(is.na(vgames1)) #NAs
+vgames2 <- vgames1[,-10]
+
+colSums(is.na(vgames2)) #NAs
+
+vgames2 <- vgames2[complete.cases(vgames2$developer),]
+vgames2 <- vgames2[complete.cases(vgames2$publisher),]
+vgames2 <- vgames2[complete.cases(vgames2$game),]
+vgames2 <- vgames2[complete.cases(vgames2$year),]
+vgames2 <- vgames2[complete.cases(vgames2$month),]
+vgames2 <- vgames2[complete.cases(vgames2$weekday),]
+
+#The rest will be completed with median
+
+vgames2 <- vgames2 %>% mutate(price = replace(
+  price,
+  is.na(price),
+  median(price, na.rm = TRUE)
+))
+vgames2 <- vgames2 %>% mutate(average_playtime = replace(
+  average_playtime,
+  is.na(average_playtime),
+  median(average_playtime, na.rm = TRUE)
+))
+
+vgames2 <- vgames2 %>% mutate(median_playtime = replace(
+  median_playtime,
+  is.na(median_playtime),
+  median(median_playtime, na.rm = TRUE)
+))
+
+colSums(is.na(vgames2)) #NAs
+
+
+```
+
+## Further Data reduction and cleanup
+
+```{r further data prep}
+str(vgames2)
+
+# create the pubdev var for later analysis
+vgames2['pubdev'] <- vgames2['publisher'] == vgames2['developer']
+
+vgames2$pubdev[vgames2$pubdev == "TRUE"] <- "Dev = Pub"
+vgames2$pubdev[vgames2$pubdev == "FALSE"] <- "Dev != Pub"
+
+
+#keep only variables of interest and changes to var structure
+colnames(vgames2)
+vgames3 <- vgames2[c(2, 4, 8, 10, 12, 13, 15)]
+str(vgames3)
+
+# factorize pubdev
+vgames3$pubdev <- as.factor(vgames3$pubdev)
+
+#ordered factor from copies sold
+vgames3$max_owners <- ordered(vgames3$max_owners)
+vgames3$copiesSold <- as.numeric(vgames3$max_owners)
+
+vgames3 <- mutate(vgames3, Sold = case_when(
+               copiesSold <= 5 ~ "0-500k",
+               copiesSold >= 6 & copiesSold < 9 ~ "500k-10m",
+               copiesSold >= 9 & copiesSold < 12 ~ "10m-500m",
+               copiesSold >= 12 & copiesSold <= 13 ~ "500m-2bn",
+               ))
+
+vgames3$copiesSold <- factor(vgames3$Sold, ordered = TRUE, levels = c("0-500k", "500k-10m", "10m-500m", "500m-2bn") )
+
+#ordered factor from prices
+vgames3 <- mutate(vgames3, price.ord = case_when(
+               price <= 5 ~ "$0-$5",
+               price > 5 & price < 10 ~ "$6-$10",
+               price >= 10 & price < 20 ~ "$10-$20",
+               price >= 20 & price <= 30 ~ "$20-$30",
+               price >= 30 & price < 40 ~ "$30-$40",
+               price >= 40 & price < 50 ~ "$40-$50",
+               price >= 50 & price <= 60 ~ "$50-$60",
+               price >= 60  ~ "More than $60",
+               ))
+
+
+
+#keep only variables of interest
+vgames.cl <- vgames3[,c(1, 7,8,10)]
+
+summary(vgames.cl)
+str(vgames.cl)
+
+
+```
+
+# Hypotheses
+
+By exploring simple faceted barcharts, it seems that the top 20 games in the database mostly have the same developer and publisher. Furthermore, it seems that the top selling games have a reteail price between 6-10 dollars.
+
+```{r}
+
+# How many games have same pub/dev and how many diff?
+
+
+
+vgames.cl$price.ord <- factor(vgames.cl$price.ord, ordered = TRUE, levels = c("$0-$5", "$6-$10", "$10-$20", "$20-$30", "$30-$40", "$40-$50", "$50-$60", "More than $60"), labels = c("$0-$5", "$6-$10", "$10-$20", "$20-$30", "$30-$40", "$40-$50", "$50-$60", "More than $60") )
+
+#adding labels and plot
+
+
+ggplot(data = vgames.cl %>% arrange(desc(copiesSold)) %>% head(20)) +
+  geom_col(aes(x =  copiesSold, y = pubdev , fill = pubdev), pch = 21, size = 3) +
+  facet_grid(. ~ price.ord) +
+  labs(
+    title = "Top 20 games where publisher and dev are the same or not, arranged by price of game and Copies Sold", x = "Copies Sold", y = "count") +
+  scale_y_discrete(breaks = NULL) +
+  theme_light() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+Therefore the hypotheses are:
+* When a game's developer and publisher are the same, it increases the probability to sell more games
+* Retail price range of 6-10 dollars increase the probability to sell more copies.
+
+# Method
+
+In order to test the hypotheses, I am using **Ordinal Logistic Regression**. All of the following assumptions are met:
+* dependent variable is measured at the ordinal level
+* There is no multicollinearity
+
+```{r}
+rcorr(cbind(vgames.cl$pubdev,vgames.cl$copiesSold, vgames.cl$price.ord))
+```
+
+
+## Building model
+
+```{r}
+model2 <- polr(copiesSold ~ pubdev + price.ord, data = vgames.cl, Hess=TRUE)
+summary(model2)
+
+#p-values are calculated
+
+summary_table <- coef(summary(model2))
+pval <- pnorm(abs(summary_table[, "t value"]),lower.tail = FALSE)* 2
+summary_table <- cbind(summary_table, "p value" = round(pval,3))
+summary.df <- data.frame(summary_table)
+
+summary.df %>% filter(p.value < 0.05) %>%  arrange(p.value) 
+
+```
+
+All predictor variables are significant (p < 0.05), hence the model presents an acceptable fit. Ordinal logistic regression captures the probabilities of belonging into a category predicted by certain variables. Based on the calculations we can simulate individual cases.
+
+For instance, how many copies can we expect to sell if we have a company where we are the developers and publishers and we would like to sell our game for 19.99 dollars.
+
+```{r}
+new_data <- data.frame("pubdev"= "Dev = Pub","price.ord"= "$10-$20")
+round(predict(model2,new_data,type = "p"), 4)
+
+```
+
+Based on the model we built and the predictors input, we can estimate that we have 93% to sell 0-500000 copies and only 5.6% chance to sell in the higher range. Probabilities are very small if we are aiming to hit a blockbuster given the parameters.
+
+It is more helpful, however, to visualise the probabilities.
+
+```{r}
+newdat <- vgames.cl[c(2,4)]
+
+newdat <- cbind(newdat, predict(model2, newdat, type = "probs"))
+
+##show first few rows
+head(newdat)
+
+
+lnewdat <- melt(newdat, id.vars = c("price.ord", "pubdev"),
+  variable.name = "Level", value.name="Probability")
+## view first few rows
+head(lnewdat)
+
+every_nth = function(n) {
+  return(function(x) {x[c(TRUE, rep(FALSE, n - 1))]})
+}
+
+ggplot(lnewdat, aes(x = price.ord, y = Probability, colour = Level)) +
+  geom_point() + facet_grid(. ~ pubdev, labeller="label_both") + scale_fill_brewer(palette="Set1") + scale_x_discrete(breaks = every_nth(n = 2))
+
+```
+
+# Conclusions
+
+The plot suggests the following conclusions:
+
+If a company aims for the 500k-10M sold copies, it is more advisable to separate developing and publishing, regardless of retail price. Success probability is higher if the developer and publisher are the same when a company aims for copies under 500k.
+
+Regarding price ranges: cheap games are selling well but the probability to sell more than 500k copies is challenging. In order to maximize the probability of sales based on the price of the game, companies should aim for the 50-60 dollar range.
+
+Based on the analysis we can conclude that we reject hypothesis 1. The data presents the exact opposite idea. In order to gain more copies sold, it is better to separate developing and publishing.
+
+Given the information above, I also hav to reject hypothesis 2.
+
+# Discussion
+
+Data presented a different narrative on how to achieve success with game selling. However there are many limitiations of this analysis. Definition of success is somewhat arbitrary and further analysis is needed to create an index of this latent variable.Also, understanding game success needs to take more variables into consideration. However, the dataset was relatively limited in these terms.
+
+
+
